@@ -5,14 +5,14 @@ from PIL import Image
 import random
 import re
 import cv2
+import subprocess
+import os
 
 
 def goo(
     seed: int = Input(
-        default=None,
+        default=-1,
         description="Seed for the random number generator",
-        ge=0,
-        le=2**16,
     ),
     width: int = Input(
         default=512,
@@ -52,7 +52,7 @@ def goo(
         le=60,
     ),
 ) -> Path:
-    if seed is None:
+    if seed == -1:
         seed = int(random.random() * 2**16)
 
     ctx = moderngl.create_context(
@@ -123,30 +123,63 @@ def goo(
     fbo = ctx.framebuffer(color_attachments=[ctx.texture((width, height), 4)])
 
     if format == "mp4":
-        # Set up video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # Set up FFmpeg process for MP4/H.264 encoding
         filename = "/tmp/output.mp4"
-        out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output file if it exists
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}',
+            '-pix_fmt', 'rgb24',
+            '-r', str(fps),
+            '-i', '-',  # Read from stdin
+            '-c:v', 'libx264',  # Use H.264 codec
+            '-preset', 'fast',  # Encoding preset
+            '-profile:v', 'baseline',  # Most compatible H.264 profile
+            '-pix_fmt', 'yuv420p',  # Required for browser compatibility
+            '-movflags', '+faststart',  # Enable streaming
+            '-crf', '23',  # Quality setting (lower = better, 23 is a good default)
+            filename
+        ]
+        
+        ffmpeg_process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdin=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
 
-        # Generate frames
-        for frame in range(num_frames):
-            fbo.use()
-            ctx.clear()
-            iResolution = (width, height)
-            iTime = frame / fps  # Time based on frame number
-            prog["iResolution"].value = iResolution
-            prog["iTime"].value = iTime
-            vao.render(moderngl.TRIANGLES)  # pylint: disable=no-member
+        try:
+            # Generate frames
+            for frame in range(num_frames):
+                fbo.use()
+                ctx.clear()
+                iResolution = (width, height)
+                iTime = frame / fps
+                prog["iResolution"].value = iResolution
+                prog["iTime"].value = iTime
+                vao.render(moderngl.TRIANGLES)
 
-            data = fbo.read(components=3)
-            image = Image.frombytes("RGB", fbo.size, data)
-            image = image.transpose(Image.FLIP_TOP_BOTTOM)  # pylint: disable=no-member
+                data = fbo.read(components=3)
+                image = Image.frombytes("RGB", fbo.size, data)
+                image = image.transpose(Image.FLIP_TOP_BOTTOM)
+                
+                # Write raw frame data directly to FFmpeg's stdin
+                ffmpeg_process.stdin.write(image.tobytes())
             
-            # Convert PIL image to OpenCV format
-            frame_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-            out.write(frame_cv)
+            # Close stdin and wait for FFmpeg to finish
+            ffmpeg_process.stdin.close()
+            ffmpeg_process.wait()
+            
+            if ffmpeg_process.returncode != 0:
+                raise RuntimeError(f"FFmpeg encoding failed with error: {ffmpeg_process.stderr.read().decode()}")
+                
+        finally:
+            # Ensure resources are cleaned up
+            if ffmpeg_process.poll() is None:
+                ffmpeg_process.terminate()
+                ffmpeg_process.wait()
 
-        out.release()
         return Path(filename)
     else:
         # Original image generation code

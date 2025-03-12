@@ -9,6 +9,10 @@ build:
     - "libffi-dev"
     - libegl1-mesa
     - xvfb
+    - ffmpeg
+    - x264
+    - libx264-dev
+    - libavcodec-extra
 
   python_version: "3.11"
 
