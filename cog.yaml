@@ -1,0 +1,21 @@
+# Configuration for Cog ⚙️
+# Reference: https://github.com/replicate/cog/blob/main/docs/yaml.md
+
+build:
+  gpu: false
+
+  system_packages:
+    - mesa-utils
+    - "libffi-dev"
+    - libegl1-mesa
+    - xvfb
+
+  python_version: "3.11"
+
+  python_requirements: requirements.txt
+
+  run:
+    - Xvfb :99 -screen 0 1024x768x16 &
+    - export DISPLAY=:99
+
+predict: "goo.py:goo"
